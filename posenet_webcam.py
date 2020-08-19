@@ -2,6 +2,8 @@ import tensorflow as tf
 import numpy as np
 import cv2
 
+parts_to_compare = [(5,6),(5,7),(6,8),(7,9),(8,10),(11,12),(5,11),(6,12),(11,13),(12,14),(13,15),(14,16)]
+
 def parse_output(heatmap_data,offset_data, threshold):
     '''
     Input:
@@ -39,6 +41,11 @@ def draw_kps(show_img,kps, ratio=None):
           continue
         cv2.circle(show_img,(kps[i,1],kps[i,0]),2,(0,255,255),-1)
     return show_img
+
+def draw_deviations(img, keypoints, pairs):
+
+  for i, pair in enumerate(pairs):
+    cv2.line(img, (keypoints[pair[0]][1], keypoints[pair[0]][0]), (keypoints[pair[1]][1], keypoints[pair[1]][0]), color=(0,255,0), lineType=cv2.LINE_AA, thickness=1)
 
 model_path = "posenet_mobilenet_v1_100_257x257_multi_kpt_stripped.tflite"
 
@@ -80,8 +87,10 @@ while True:
     img_show = np.squeeze((img_input.copy()*127.5+127.5)/255.0)
     img_show = np.array(img_show*255,np.uint8)
     img_kps = parse_output(img_heatmaps,img_offsets,0.3)
-    cv2.imshow("pose", draw_kps(img_show.copy(),img_kps))
+    
+    draw_deviations(img_show, img_kps, parts_to_compare)
 
+    cv2.imshow("pose", img_show)
     # cv2.imshow("Video from webcam", img)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
