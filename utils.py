@@ -1,13 +1,33 @@
 import numpy as np
 
+keypoint_decoder = [
+    "nose",
+    "leftEye",
+    "rightEye",
+    "leftEar",
+    "rightEar",
+    "leftShoulder",
+    "rightShoulder",
+    "leftElbow",
+    "rightElbow",
+    "leftWrist",
+    "rightWrist",
+    "leftHip",
+    "rightHip",
+    "leftKnee",
+    "rightKnee",
+    "leftAnkle",
+    "rightAnkle",
+]
+
 # code from https://github.com/tensorflow/tfjs-models/tree/master/posenet
-def parse_output_multipose(scores, offsets, maxPose, localMaxR, outputStride, threshold=0.5):
-    height, width, numKeypoints = scores.shape
+def decode_multipose(heatmaps, offsets, maxPose, localMaxR, outputStride, threshold=0.5):
+    height, width, numKeypoints = heatmaps.shape
     poses = []
     queue = []
     for keypointId in range(numKeypoints):
         # only consider points with score >= threshold as root candidate
-        candidates = np.argwhere(scores[:,:,keypointId] >= threshold)
+        candidates = np.argwhere(heatmaps[:,:,keypointId] >= threshold)
 
         for candidate in candidates:
             x, y = candidate
@@ -17,13 +37,13 @@ def parse_output_multipose(scores, offsets, maxPose, localMaxR, outputStride, th
             x1 = min(width, x+localMaxR+1)
             y0 = max(0, y-localMaxR)
             y1 = min(height, y+localMaxR+1)
-            subarray = scores[x0:x1, y0:y1, keypointId]
+            subarray = heatmaps[x0:x1, y0:y1, keypointId]
     
             max_idx = np.argmax(subarray)
             xmax, ymax = np.unravel_index(max_idx, subarray.shape)
             if xmax == x and ymax == y:
                 queue.append({
-                    'score': scores[x,y,keypointId],
+                    'score': heatmaps[x,y,keypointId],
                     'pos': (x,y,keypointId)
                 })
 
@@ -44,6 +64,26 @@ def parse_output_multipose(scores, offsets, maxPose, localMaxR, outputStride, th
             score: None, # get instance score from the instance
         })
     return queue
+
+def decode_singlepose(heatmaps, offsets, outputStride, threshold):
+    numKeypoints = heatmaps.shape[-1]
+
+    def get_keypoint(i):
+        sub_heatmap = heatmaps[:,:,i]    # heatmap corresponding to keypoint i
+        y, x = np.unravel_index(np.argmax(sub_heatmap), sub_heatmap.shape)    # y, x position of the max value in heatmap
+        score = sub_heatmap[y,x]    # max value in heatmap
+
+        # convert x, y to coordinates on the input image
+        y_image = y*outputStride + offsets[y, x, i]
+        x_image = x*outputStride + offsets[y, x, i + numKeypoints]
+        
+        y_image = int(round(y_image))
+        x_image = int(round(x_image))
+        return (y_image, x_image), score
+
+    keypoints = [get_keypoint(i) for i in range(numKeypoints)]
+    
+    return keypoints
 
 if __name__ == '__main__':
     scores = np.random.randn(64, 64, 10)
