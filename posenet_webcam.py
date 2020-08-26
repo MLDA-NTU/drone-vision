@@ -2,9 +2,15 @@ import tensorflow as tf
 import numpy as np
 import cv2
 
+# code from https://medium.com/roonyx/pose-estimation-and-matching-with-tensorflow-lite-posenet-model-ea2e9249abbd
+
+# Pairs represents the lines connected from joints
+# e.g. (5,6) is from leftShoulder to rightShoulder
+# https://www.tensorflow.org/lite/models/pose_estimation/overview
 parts_to_compare = [(5,6),(5,7),(6,8),(7,9),(8,10),(11,12),(5,11),(6,12),(11,13),(12,14),(13,15),(14,16)]
 
-def parse_output(heatmap_data,offset_data, threshold):
+
+def parse_output(heatmap_data, offset_data, threshold):
     '''
     Input:
         heatmap_data - hetmaps for an image. Three dimension array
@@ -15,13 +21,14 @@ def parse_output(heatmap_data,offset_data, threshold):
         low probability
     '''
 
-    joint_num = heatmap_data.shape[-1]
-    pose_kps = np.zeros((joint_num,3), np.uint32)
+    joint_num = heatmap_data.shape[-1]  # number of joints
+    pose_kps = np.zeros((joint_num,3), np.uint32)   # initialize array
 
-    for i in range(heatmap_data.shape[-1]):
-
-        joint_heatmap = heatmap_data[...,i]
+    for i in range(joint_num): # loop through the number of joints
+        joint_heatmap = heatmap_data[...,i] # get the probability heatmap for that joint i
+        # this line yields only 1 pose
         max_val_pos = np.squeeze(np.argwhere(joint_heatmap==np.max(joint_heatmap)))
+        
         remap_pos = np.array(max_val_pos/8*257,dtype=np.int32)
         pose_kps[i,0] = int(remap_pos[0] + offset_data[max_val_pos[0],max_val_pos[1],i])
         pose_kps[i,1] = int(remap_pos[1] + offset_data[max_val_pos[0],max_val_pos[1],i+joint_num])
