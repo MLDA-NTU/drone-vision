@@ -1,4 +1,5 @@
 import numpy as np
+import cv2
 
 keypoint_decoder = [
     "nose",
@@ -19,6 +20,11 @@ keypoint_decoder = [
     "leftAnkle",
     "rightAnkle",
 ]
+
+# Pairs represents the lines connected from joints
+# e.g. (5,6) is from leftShoulder to rightShoulder
+# https://www.tensorflow.org/lite/models/pose_estimation/overview
+parts_to_compare = [(5,6),(5,7),(6,8),(7,9),(8,10),(11,12),(5,11),(6,12),(11,13),(12,14),(13,15),(14,16)]
 
 # code from https://github.com/tensorflow/tfjs-models/tree/master/posenet
 def decode_multipose(heatmaps, offsets, maxPose, localMaxR, outputStride, threshold=0.5):
@@ -65,7 +71,8 @@ def decode_multipose(heatmaps, offsets, maxPose, localMaxR, outputStride, thresh
         })
     return queue
 
-def decode_singlepose(heatmaps, offsets, outputStride, threshold):
+def decode_singlepose(heatmaps, offsets, outputStride):
+    ''' Decode heatmaps and offets output to keypoints. Return a list of keypoints, each keypoint is a tuple ((y_pos, x_pos), score) '''
     numKeypoints = heatmaps.shape[-1]
 
     def get_keypoint(i):
@@ -84,6 +91,23 @@ def decode_singlepose(heatmaps, offsets, outputStride, threshold):
     keypoints = [get_keypoint(i) for i in range(numKeypoints)]
     
     return keypoints
+
+def draw_keypoints(img, keypoints, threshold=0.5, scaleX=1, scaleY=1):
+    ''' Draw keypoints on the given image '''
+    for i, keypoint in enumerate(keypoints):
+        pos, score = keypoint
+        if score < threshold:
+            continue    # skip if score is below threshold
+
+        # scale x and y back to original image size
+        y = int(round(pos[0] * scaleY))
+        x = int(round(pos[1] * scaleX))
+
+        cv2.circle(img,(x,y),5,(0,255,0),-1)    # draw keypoint as circle
+        keypoint_name = keypoint_decoder[i]
+        cv2.putText(img,keypoint_name,(x,y),cv2.FONT_HERSHEY_PLAIN,1,(255,0,0),2) # put the name of keypoint
+
+    return img
 
 if __name__ == '__main__':
     scores = np.random.randn(64, 64, 10)
