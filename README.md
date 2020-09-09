@@ -22,3 +22,36 @@ posenet.draw_keypoints_to_image(img, keypoint)
 Check `posenet_webcam.py` for a sample code using PoseNet wrapper with webcam input.
 
 Currently only single-pose estimation is supported.
+
+## Download and convert PoseNet ResNet float model
+
+Download code from this repo: https://github.com/atomicbits/posenet-python
+
+```
+git clone https://github.com/atomicbits/posenet-python.git
+cd posenet-python
+```
+
+Installing dependencies of this package will mess up tensorflow-gpu install. Thus setting up a virtual environment is needed. Instruction below is for `conda`
+
+```
+conda create -n convert-tfjs python=3.8
+conda activate tfjs
+conda install pip
+pip install -r requirements.txt
+```
+
+Run the sample script to trigger the download and model conversion process
+
+```
+python image_demo.py --model resnet50 --stride 16 --image_dir ./images --output_dir ./output
+```
+
+The converted ResNet50 model is now saved at `posenet-python/_tf_models/posenet/resnet50_float/stride16`. It contains the following
+
+```
+saved_model.pb
+variables/
+```
+
+Copy the content of this folder to another folder for easy access to the converted model.
