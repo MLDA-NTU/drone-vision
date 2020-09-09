@@ -5,7 +5,7 @@ import cv2
 from posenet import PoseNet, detect_pose
 
 # itialize posenet from the package
-model_path = "posenet_mobilenet_v1_100_257x257_multi_kpt_stripped.tflite"
+model_path = 'posenet_resnet50float_stride16'
 posenet = PoseNet(model_path)
 
 # SET UP WEBCAM
@@ -27,7 +27,7 @@ while True:
     # draw keypoints to the original image
     threshold = 0.0
     posenet.draw_pose(img, keypoints, threshold=threshold)
-    poses = detect_pose(keypoints)
+    poses = detect_pose(keypoints, threshold=0.3)
     detected_poses = [pose for pose, detected in poses.items() if detected]
     detected_poses = ' '.join(detected_poses) if detected_poses else 'None'
     

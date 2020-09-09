@@ -57,36 +57,18 @@ childToParentEdges = [parentId for (parentId, _) in parentChildrenTuples]
 
 class PoseNet():
     def __init__(self, model_path):
-        ''' initialize TensorFlow Lite with the given model_path '''
-        # set up tensorflow lite
-        self.interpreter = tf.lite.Interpreter(model_path=model_path)
-        self.interpreter.allocate_tensors()
-
-        self.input_details = self.interpreter.get_input_details()
-        self.output_details = self.interpreter.get_output_details()
-
-        # shape is (batch_size, height, width, channel)
-        self.INPUT_HEIGHT = self.input_details[0]['shape'][1]
-        self.INPUT_WIDTH = self.input_details[0]['shape'][2]
-        self.FLOATING_MODEL = self.input_details[0]['dtype'] == np.float32
-
-        self.INPUT_INDEX = self.input_details[0]['index']
-        self.HEATMAP_INDEX = self.output_details[0]['index']
-        self.OFFSET_INDEX = self.output_details[1]['index']
-        self.DISPLACEMENTFWD_INDEX = self.output_details[2]['index']
-        self.DISPLACEMENTBWD_INDEX = self.output_details[3]['index']
-
-        self.OUTPUT_STRIDE = int(self.INPUT_HEIGHT / (self.output_details[0]['shape'][1] - 1))
-
-    def get_input_dim(self):
-        ''' return (INPUT_WIDTH, INPUT_HEIGHT) '''
-        return self.INPUT_WIDTH, self.INPUT_HEIGHT
-
+        self.model = tf.saved_model.load(model_path)
+        self.model_fn = self.model.signatures["serving_default"]
+        self.OUTPUT_STRIDE = 16
+        self.INPUT_WIDTH = self.INPUT_HEIGHT = 224
+        
     def prepare_input(self, img):
         ''' img is a (height, width, 3) image. this will resize the image to the PoseNet input dimensions, and add a batch dimension. Return an image with shape (1, INPUT_HEIGHT, INPUT_WIDTH, 3). Original image is not modified. '''
-        img_copy = img.copy()
+        img_copy = cv2.cvtColor(img.copy(), cv2.COLOR_BGR2RGB)
+        img_copy = img_copy - [123.15, 115.90, 103.06]
         img_copy = cv2.resize(img_copy, (self.INPUT_WIDTH, self.INPUT_HEIGHT))
         img_copy = np.expand_dims(img_copy, axis=0)
+        img_copy = tf.convert_to_tensor(img_copy, dtype=tf.float32)
         return img_copy
 
     def draw_keypoints(self, img, keypoints, threshold=0.2):
@@ -102,23 +84,14 @@ class PoseNet():
 
     def predict(self, img):
         ''' invoke the TensorFlow Lite model. Return heatmaps, offsets, displacementFoward, and displacementBackward tensors '''
-        img_copy = img.copy()
-        if self.FLOATING_MODEL:
-            img_copy = (img_copy.astype(np.float32) - 127.5) / 127.5
+        img_copy = img
 
-        self.interpreter.set_tensor(self.INPUT_INDEX, img_copy)  # load image input to INPUT_INDEX
-        self.interpreter.invoke()    # run the model
-
-        heatmaps = self.interpreter.get_tensor(self.HEATMAP_INDEX)    # obtain heatmaps
-        offsets = self.interpreter.get_tensor(self.OFFSET_INDEX)      # obtain offsets
-        displacementFwd = self.interpreter.get_tensor(self.DISPLACEMENTFWD_INDEX)     # obtain displacement forward
-        displacementBwd = self.interpreter.get_tensor(self.DISPLACEMENTBWD_INDEX)     # obtain displacement backward
-
-        return heatmaps, offsets, displacementFwd, displacementBwd
+        output = self.model_fn(img_copy)
+        return output.values()
 
     def predict_singlepose(self, img):
         ''' Wrapper around decode_singlepose. Return a list of 17 keypoints '''
-        img_copy = img.copy()
+        img_copy = img
         heatmaps, offsets, _, _ = self.predict(img_copy)
 
         heatmaps = np.squeeze(heatmaps)
@@ -227,7 +200,7 @@ def traverseToTargetKeypoint(edgeId, sourceKeypoint, targetKeypointId, scores, o
         i = 0
 
 
-def draw_keypoints(img, keypoints, threshold=0.5, scaleX=1, scaleY=1):
+def draw_keypoints(img, keypoints, threshold=0.5, scaleX=1, scaleY=1, fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1, color=(255,0,0), thickness=2):
     ''' Draw keypoints on the given image '''
     for i, keypoint in enumerate(keypoints):
         pos, score = keypoint
@@ -240,7 +213,7 @@ def draw_keypoints(img, keypoints, threshold=0.5, scaleX=1, scaleY=1):
 
         cv2.circle(img,(x,y),5,(0,255,0),-1)    # draw keypoint as circle
         keypoint_name = keypoint_decoder[i]
-        cv2.putText(img,keypoint_name,(x,y),cv2.FONT_HERSHEY_PLAIN,1,(255,0,0),2) # put the name of keypoint
+        cv2.putText(img,keypoint_name,(x,y),fontFace,fontScale,color,thickness) # put the name of keypoint
 
     return img
 
@@ -293,7 +266,7 @@ def detect_pose(keypoints, threshold=0.1):
     for side in ['left', 'right']:
         key = f'{side}-hand-up'
         result[key] = True
-        handup_series = ['Shoulder', 'Elbow', 'Wrist']                     # consider these 3 points
+        handup_series = ['Wrist', 'Elbow', 'Shoulder']                     # consider these 3 points
         handup_series = [keypoint_encoder[f'{side}{x}'] for x in handup_series]   # convert to keypoint id
         handup_series = [keypoints[x][0] for x in handup_series]                  # obtain positions
 
@@ -313,7 +286,7 @@ def detect_pose(keypoints, threshold=0.1):
 
 if __name__ == '__main__':
     # set up posenet
-    model_path = "posenet_mobilenet_v1_100_257x257_multi_kpt_stripped.tflite"
+    model_path = 'posenet_resnet50float_stride16'
     posenet = PoseNet(model_path)
 
     # read image and prepare input to shape (1, height, width, 3)
