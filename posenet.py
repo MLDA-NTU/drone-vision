@@ -28,7 +28,8 @@ keypoint_encoder = {x: i for i,x in enumerate(keypoint_decoder)}
 # Pairs represents the lines connected from joints
 # e.g. (5,6) is from leftShoulder to rightShoulder
 # https://www.tensorflow.org/lite/models/pose_estimation/overview
-parts_to_compare = [(5,6),(5,7),(6,8),(7,9),(8,10),(11,12),(5,11),(6,12),(11,13),(12,14),(13,15),(14,16)]
+keypoint_lines = [(5,6),(5,7),(6,8),(7,9),(8,10),(11,12),(5,11),(6,12),(11,13),(12,14),(13,15),(14,16)]
+face_keypoints = [0, 1, 2, 3, 4]
 
 # define the skeleton. code from Google's tfjs-models
 # each tuple is (parent, child)
@@ -88,11 +89,16 @@ class PoseNet():
         img_copy = np.expand_dims(img_copy, axis=0)
         return img_copy
 
-    def draw_keypoints_to_image(self, img, keypoints, threshold=0.5):
+    def draw_keypoints(self, img, keypoints, threshold=0.2):
         ''' draw keypoints on the image img. will resize the keypoints if img size is different from INPUT_WIDTH and INPUT_HEIGHT '''
         scaleX = img.shape[1] / self.INPUT_WIDTH
         scaleY = img.shape[0] / self.INPUT_HEIGHT
         return draw_keypoints(img, keypoints, threshold=threshold, scaleX=scaleX, scaleY=scaleY)
+
+    def draw_pose(self, img, keypoints, threshold=0.2):
+        scaleX = img.shape[1] / self.INPUT_WIDTH
+        scaleY = img.shape[0] / self.INPUT_HEIGHT
+        return draw_pose(img, keypoints, threshold=threshold, scaleX=scaleX, scaleY=scaleY)
 
     def predict(self, img):
         ''' invoke the TensorFlow Lite model. Return heatmaps, offsets, displacementFoward, and displacementBackward tensors '''
@@ -133,9 +139,9 @@ def decode_singlepose(heatmaps, offsets, outputStride):
         y_image = y*outputStride + offsets[y, x, i]
         x_image = x*outputStride + offsets[y, x, i + numKeypoints]
         
-        y_image = int(round(y_image))
-        x_image = int(round(x_image))
-        return (y_image, x_image), score
+        # position is wrapped in a np array to support vector operations
+        pos = np.array([x_image, y_image])
+        return pos, score
 
     keypoints = [get_keypoint(i) for i in range(numKeypoints)]
     
@@ -229,8 +235,8 @@ def draw_keypoints(img, keypoints, threshold=0.5, scaleX=1, scaleY=1):
             continue    # skip if score is below threshold
 
         # scale x and y back to original image size
-        y = int(round(pos[0] * scaleY))
-        x = int(round(pos[1] * scaleX))
+        y = int(round(pos[1] * scaleY))
+        x = int(round(pos[0] * scaleX))
 
         cv2.circle(img,(x,y),5,(0,255,0),-1)    # draw keypoint as circle
         keypoint_name = keypoint_decoder[i]
@@ -238,21 +244,89 @@ def draw_keypoints(img, keypoints, threshold=0.5, scaleX=1, scaleY=1):
 
     return img
 
+def draw_pose(img, keypoints, threshold=0.2, scaleX=1, scaleY=1, color=(0,255,0), keypointRadius=5, keypointThickness=-1, lineThickness=2):
+    ''' Draw pose on img. keypoints is a list of 17 keypoints '''
+
+    # draw keypoints of the face (eyes, ears and nose)
+    for keypointId in face_keypoints:
+        pos, score = keypoints[keypointId]
+        if score < threshold:
+            continue
+        y = int(round(pos[1] * scaleY))
+        x = int(round(pos[0] * scaleX))
+
+        cv2.circle(img, (x,y), keypointRadius, color, keypointThickness)
+
+    # draw lines connecting joints
+    for (id1, id2) in keypoint_lines:
+        pos1, score1 = keypoints[id1]
+        pos2, score2 = keypoints[id2]
+        if score1 < threshold or score2 < threshold:
+            continue
+        y1 = int(round(pos1[1] * scaleY))
+        x1 = int(round(pos1[0] * scaleX))
+        y2 = int(round(pos2[1] * scaleY))
+        x2 = int(round(pos2[0] * scaleX))
+
+        cv2.line(img, (x1,y1), (x2,y2), color, lineThickness)
+    
+    return img
+
+def detect_pose(keypoints, threshold=0.1):
+    result = {}
+
+    # t-pose
+    result['t-pose'] = True
+    tpose_series = ['leftWrist', 'leftElbow', 'leftShoulder', 'rightShoulder', 'rightElbow', 'rightWrist']  # consider these 5 points
+    tpose_series = [keypoint_encoder[x] for x in tpose_series]                                              # convert to keypoint id
+    tpose_series = [keypoints[x][0] for x in tpose_series]                                                  # obtain positions from keypoints
+
+    for i in range(len(tpose_series)-1):
+        vector = tpose_series[i+1] - tpose_series[i]    # get vector of consecutive keypoints
+        cosAngle2 = vector[1]**2 / vector.dot(vector)   # calculate cos angle squared wrt to vertical
+
+        if cosAngle2 > threshold:
+            result['t-pose'] = False
+            break
+
+    # left-hand-up and right-hand-up
+    for side in ['left', 'right']:
+        key = f'{side}-hand-up'
+        result[key] = True
+        handup_series = ['Shoulder', 'Elbow', 'Wrist']                     # consider these 3 points
+        handup_series = [keypoint_encoder[f'{side}{x}'] for x in handup_series]   # convert to keypoint id
+        handup_series = [keypoints[x][0] for x in handup_series]                  # obtain positions
+
+        for i in range(len(handup_series)-1):
+            vector = handup_series[i+1] - handup_series[i]  # get vector
+            if vector[1] < 0:
+                result[key] = False
+                break
+            
+            cosAngle = vector[0] / np.linalg.norm(vector)   # calculate cos angle wrt to horizontal
+
+            if cosAngle > threshold:
+                result[key] = False
+                break
+
+    return result
+
 if __name__ == '__main__':
     # set up posenet
     model_path = "posenet_mobilenet_v1_100_257x257_multi_kpt_stripped.tflite"
     posenet = PoseNet(model_path)
 
     # read image and prepare input to shape (1, height, width, 3)
-    img = cv2.imread('7535.jpg')
-    img = cv2.resize(img, (1920, 1080))
+    img = cv2.imread('person.jpg')
     img_input = posenet.prepare_input(img)
 
     # apply model
     keypoints = posenet.predict_singlepose(img_input)
     # draw keypoints on original image
-    posenet.draw_keypoints_to_image(img, keypoints)
+    # posenet.draw_keypoints(img, keypoints)
+    posenet.draw_pose(img, keypoints)
+    detect_pose(keypoints)
 
-    cv2.imshow('round=True', img)
+    cv2.imshow('posenet', img)
     cv2.waitKey(0)
     cv2.destroyAllWindows()

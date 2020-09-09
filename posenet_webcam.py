@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 import cv2
 
-from posenet import PoseNet
+from posenet import PoseNet, detect_pose
 
 # itialize posenet from the package
 model_path = "posenet_mobilenet_v1_100_257x257_multi_kpt_stripped.tflite"
@@ -25,8 +25,13 @@ while True:
     keypoints = posenet.predict_singlepose(img_input)
 
     # draw keypoints to the original image
-    threshold = 0.2
-    posenet.draw_keypoints_to_image(img, keypoints, threshold=threshold)
+    threshold = 0.0
+    posenet.draw_pose(img, keypoints, threshold=threshold)
+    poses = detect_pose(keypoints)
+    detected_poses = [pose for pose, detected in poses.items() if detected]
+    detected_poses = ' '.join(detected_poses) if detected_poses else 'None'
+    
+    cv2.putText(img, f'{detected_poses} detected', (0,300), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
 
     cv2.imshow("pose", img)                 # show the image with keypoints
     if cv2.waitKey(1) & 0xFF == ord('q'):   # terminate window when press q
