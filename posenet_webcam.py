@@ -27,6 +27,7 @@ while True:
     # draw keypoints to the original image
     threshold = 0.0
     posenet.draw_pose(img, keypoints, threshold=threshold)
+    posenet.draw_keypoints(img, keypoints, threshold=threshold)
     poses = detect_pose(keypoints, threshold=0.3)
     detected_poses = [pose for pose, detected in poses.items() if detected]
     detected_poses = ' '.join(detected_poses) if detected_poses else 'None'

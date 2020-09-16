@@ -90,7 +90,7 @@ class PoseNet():
         return output.values()
 
     def predict_singlepose(self, img):
-        ''' Wrapper around decode_singlepose. Return a list of 17 keypoints '''
+        ''' Wrapper around decode_singlepose. Return a list of 17 keypoints. Each keypoint is a tuple of (np.ndarray([x,y]), score), where x, y are the positions on the input image '''
         img_copy = img
         heatmaps, offsets, _, _ = self.predict(img_copy)
 
@@ -100,7 +100,7 @@ class PoseNet():
         return decode_singlepose(heatmaps, offsets, self.OUTPUT_STRIDE)
 
 def decode_singlepose(heatmaps, offsets, outputStride):
-    ''' Decode heatmaps and offets output to keypoints. Return a list of keypoints, each keypoint is a tuple ((y_pos, x_pos), score) '''
+    ''' Decode heatmaps and offets output to keypoints. Return a list of keypoints, each keypoint is a dictionary, with keys 'pos' for position np.ndarray([x,y]) and 'score' for confidence score '''
     numKeypoints = heatmaps.shape[-1]
 
     def get_keypoint(i):
@@ -114,7 +114,7 @@ def decode_singlepose(heatmaps, offsets, outputStride):
         
         # position is wrapped in a np array to support vector operations
         pos = np.array([x_image, y_image])
-        return pos, score
+        return {'pos': pos, 'score': score}
 
     keypoints = [get_keypoint(i) for i in range(numKeypoints)]
     
@@ -203,7 +203,8 @@ def traverseToTargetKeypoint(edgeId, sourceKeypoint, targetKeypointId, scores, o
 def draw_keypoints(img, keypoints, threshold=0.5, scaleX=1, scaleY=1, fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1, color=(255,0,0), thickness=2):
     ''' Draw keypoints on the given image '''
     for i, keypoint in enumerate(keypoints):
-        pos, score = keypoint
+        pos = keypoint['pos']
+        score = keypoint['score']
         if score < threshold:
             continue    # skip if score is below threshold
 
@@ -222,7 +223,8 @@ def draw_pose(img, keypoints, threshold=0.2, scaleX=1, scaleY=1, color=(0,255,0)
 
     # draw keypoints of the face (eyes, ears and nose)
     for keypointId in face_keypoints:
-        pos, score = keypoints[keypointId]
+        pos = keypoints[keypointId]['pos']
+        score = keypoints[keypointId]['score']
         if score < threshold:
             continue
         y = int(round(pos[1] * scaleY))
@@ -232,8 +234,8 @@ def draw_pose(img, keypoints, threshold=0.2, scaleX=1, scaleY=1, color=(0,255,0)
 
     # draw lines connecting joints
     for (id1, id2) in keypoint_lines:
-        pos1, score1 = keypoints[id1]
-        pos2, score2 = keypoints[id2]
+        pos1, score1 = keypoints[id1]['pos'], keypoints[id1]['score']
+        pos2, score2 = keypoints[id2]['pos'], keypoints[id2]['score']
         if score1 < threshold or score2 < threshold:
             continue
         y1 = int(round(pos1[1] * scaleY))
@@ -252,15 +254,23 @@ def detect_pose(keypoints, threshold=0.1):
     result['t-pose'] = True
     tpose_series = ['leftWrist', 'leftElbow', 'leftShoulder', 'rightShoulder', 'rightElbow', 'rightWrist']  # consider these 5 points
     tpose_series = [keypoint_encoder[x] for x in tpose_series]                                              # convert to keypoint id
-    tpose_series = [keypoints[x][0] for x in tpose_series]                                                  # obtain positions from keypoints
+    tpose_series = [keypoints[x] for x in tpose_series]                                                     # obtain positions from keypoints
 
-    for i in range(len(tpose_series)-1):
-        vector = tpose_series[i+1] - tpose_series[i]    # get vector of consecutive keypoints
-        cosAngle2 = vector[1]**2 / vector.dot(vector)   # calculate cos angle squared wrt to vertical
-
-        if cosAngle2 > threshold:
-            result['t-pose'] = False
+    reject = False
+    for tpose_point in tpose_series:
+        if tpose_point['score'] < 0.2:
+            reject = True
             break
+    if reject:
+        result['t-pose'] = False
+    else:
+        for i in range(len(tpose_series)-1):
+            vector = tpose_series[i+1]['pos'] - tpose_series[i]['pos']  # get vector of consecutive keypoints
+            cosAngle2 = vector[1]**2 / vector.dot(vector)       # calculate cos angle squared wrt to vertical
+
+            if cosAngle2 > threshold:
+                result['t-pose'] = False
+                break
 
     # left-hand-up and right-hand-up
     for side in ['left', 'right']:
@@ -268,19 +278,27 @@ def detect_pose(keypoints, threshold=0.1):
         result[key] = True
         handup_series = ['Wrist', 'Elbow', 'Shoulder']                     # consider these 3 points
         handup_series = [keypoint_encoder[f'{side}{x}'] for x in handup_series]   # convert to keypoint id
-        handup_series = [keypoints[x][0] for x in handup_series]                  # obtain positions
+        handup_series = [keypoints[x] for x in handup_series]                  # obtain positions
 
-        for i in range(len(handup_series)-1):
-            vector = handup_series[i+1] - handup_series[i]  # get vector
-            if vector[1] < 0:
-                result[key] = False
+        reject = False
+        for handup_point in handup_series:
+            if handup_point['score'] < 0.2:
+                reject = True
                 break
-            
-            cosAngle = vector[0] / np.linalg.norm(vector)   # calculate cos angle wrt to horizontal
+        if reject:
+            result[key] = False
+        else:
+            for i in range(len(handup_series)-1):
+                vector = handup_series[i+1]['pos'] - handup_series[i]['pos']  # get vector
+                if vector[1] < 0:
+                    result[key] = False
+                    break
+                
+                cosAngle = vector[0] / np.linalg.norm(vector)   # calculate cos angle wrt to horizontal
 
-            if cosAngle > threshold:
-                result[key] = False
-                break
+                if cosAngle > threshold:
+                    result[key] = False
+                    break
 
     return result
 
@@ -296,7 +314,7 @@ if __name__ == '__main__':
     # apply model
     keypoints = posenet.predict_singlepose(img_input)
     # draw keypoints on original image
-    # posenet.draw_keypoints(img, keypoints)
+    posenet.draw_keypoints(img, keypoints)
     posenet.draw_pose(img, keypoints)
     detect_pose(keypoints)
 
