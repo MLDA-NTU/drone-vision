@@ -7,14 +7,17 @@ from posenet import PoseNet, detect_pose
 # itialize posenet from the package
 model_path = "posenet_mobilenet_v1_100_257x257_multi_kpt_stripped.tflite"
 posenet = PoseNet(model_path)
-
 # SET UP WEBCAM
 # -------------
 cap = cv2.VideoCapture(0)
+
 # Set VideoCaptureProperties 
 cap.set(3, 1280)    # width = 1280
 cap.set(4, 720)     # height = 720
-
+CAMERA_RESOLUTION_WIDTH = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+CAMERA_RESOLUTION_HEIGHT = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+CENTER_X = CAMERA_RESOLUTION_WIDTH//2
+CENTER_Y = CAMERA_RESOLUTION_HEIGHT//2
 # MAIN LOOP
 # ---------
 while True:
@@ -23,6 +26,10 @@ while True:
 
     # get keypoints for single pose estimation. it is a list of 17 keypoints
     keypoints = posenet.predict_singlepose(img_input)
+
+    #track drone
+    nose_dist_x,nose_dist_y = posenet.nose_dist_to_center(img,keypoints,CENTER_X,CENTER_Y)
+    print(nose_dist_x,nose_dist_y)
 
     # draw keypoints to the original image
     threshold = 0.0

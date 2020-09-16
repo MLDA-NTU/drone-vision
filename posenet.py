@@ -125,9 +125,19 @@ class PoseNet():
         offsets = np.squeeze(offsets)
 
         return decode_singlepose(heatmaps, offsets, self.OUTPUT_STRIDE)
+    
+    def nose_dist_to_center(self, img, keypoints, center_x, center_y):
+        nose = keypoints[0]
+        scaleX = img.shape[1] / self.INPUT_WIDTH
+        scaleY = img.shape[0] / self.INPUT_HEIGHT
+        scaled_nose = (int(round(nose[0][0] * scaleX)),int(round(nose[0][1] * scaleY)))
+        x_distance = np.abs(scaled_nose[0] - center_x)
+        y_distance = np.abs(scaled_nose[1] - center_y)
+        cv2.putText(img,f'x_distance:{x_distance} y_distance:{y_distance}', (0,center_y), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
+        return x_distance,y_distance
 
 def decode_singlepose(heatmaps, offsets, outputStride):
-    ''' Decode heatmaps and offets output to keypoints. Return a list of keypoints, each keypoint is a tuple ((y_pos, x_pos), score) '''
+    ''' Decode heatmaps and offets output to keypoints. Return a list of keypoints, each keypoint is a tuple ((x_pos, y_pos), score) '''
     numKeypoints = heatmaps.shape[-1]
 
     def get_keypoint(i):
