@@ -85,20 +85,10 @@ class PoseNet():
     def prepare_input(self, img):
         ''' img is a (height, width, 3) image. this will resize the image to the PoseNet input dimensions, and add a batch dimension. Return an image with shape (1, INPUT_HEIGHT, INPUT_WIDTH, 3). Original image is not modified. '''
         img_copy = img.copy()
+        img_copy = cv2.cvtColor(img_copy, cv2.COLOR_BGR2RGB)
         img_copy = cv2.resize(img_copy, (self.INPUT_WIDTH, self.INPUT_HEIGHT))
         img_copy = np.expand_dims(img_copy, axis=0)
         return img_copy
-
-    def draw_keypoints(self, img, keypoints, threshold=0.2):
-        ''' draw keypoints on the image img. will resize the keypoints if img size is different from INPUT_WIDTH and INPUT_HEIGHT '''
-        scaleX = img.shape[1] / self.INPUT_WIDTH
-        scaleY = img.shape[0] / self.INPUT_HEIGHT
-        return draw_keypoints(img, keypoints, threshold=threshold, scaleX=scaleX, scaleY=scaleY)
-
-    def draw_pose(self, img, keypoints, threshold=0.2):
-        scaleX = img.shape[1] / self.INPUT_WIDTH
-        scaleY = img.shape[0] / self.INPUT_HEIGHT
-        return draw_pose(img, keypoints, threshold=threshold, scaleX=scaleX, scaleY=scaleY)
 
     def predict(self, img):
         ''' invoke the TensorFlow Lite model. Return heatmaps, offsets, displacementFoward, and displacementBackward tensors '''
@@ -118,23 +108,21 @@ class PoseNet():
 
     def predict_singlepose(self, img):
         ''' Wrapper around decode_singlepose. Return a list of 17 keypoints '''
-        img_copy = img.copy()
-        heatmaps, offsets, _, _ = self.predict(img_copy)
+        img_input = self.prepare_input(img)
+        heatmaps, offsets, _, _ = self.predict(img_input)
 
         heatmaps = np.squeeze(heatmaps)
         offsets = np.squeeze(offsets)
 
-        return decode_singlepose(heatmaps, offsets, self.OUTPUT_STRIDE)
-    
-    def nose_dist_to_center(self, img, keypoints, center_x, center_y):
-        nose = keypoints[0]
-        scaleX = img.shape[1] / self.INPUT_WIDTH
+        keypoints = decode_singlepose(heatmaps, offsets, self.OUTPUT_STRIDE)
+        
         scaleY = img.shape[0] / self.INPUT_HEIGHT
-        scaled_nose = (int(round(nose[0][0] * scaleX)),int(round(nose[0][1] * scaleY)))
-        x_distance = np.abs(scaled_nose[0] - center_x)
-        y_distance = np.abs(scaled_nose[1] - center_y)
-        cv2.putText(img,f'x_distance:{x_distance} y_distance:{y_distance}', (0,center_y), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
-        return x_distance,y_distance
+        scaleX = img.shape[1] / self.INPUT_WIDTH
+        scale = np.array([scaleX, scaleY])
+        for keypoint in keypoints:
+            keypoint['position'] = np.round(keypoint['position'] * scale).astype(int)
+
+        return keypoints
 
 def decode_singlepose(heatmaps, offsets, outputStride):
     ''' Decode heatmaps and offets output to keypoints. Return a list of keypoints, each keypoint is a tuple ((x_pos, y_pos), score) '''
@@ -151,7 +139,7 @@ def decode_singlepose(heatmaps, offsets, outputStride):
         
         # position is wrapped in a np array to support vector operations
         pos = np.array([x_image, y_image])
-        return pos, score
+        return {'position': pos, 'score': score}
 
     keypoints = [get_keypoint(i) for i in range(numKeypoints)]
     
@@ -237,48 +225,43 @@ def traverseToTargetKeypoint(edgeId, sourceKeypoint, targetKeypointId, scores, o
         i = 0
 
 
-def draw_keypoints(img, keypoints, threshold=0.5, scaleX=1, scaleY=1):
+def draw_keypoints(img, keypoints, threshold=0.5):
     ''' Draw keypoints on the given image '''
     for i, keypoint in enumerate(keypoints):
-        pos, score = keypoint
+        pos = keypoint['position']
+        score = keypoint['score']
         if score < threshold:
             continue    # skip if score is below threshold
 
-        # scale x and y back to original image size
-        y = int(round(pos[1] * scaleY))
-        x = int(round(pos[0] * scaleX))
-
-        cv2.circle(img,(x,y),5,(0,255,0),-1)    # draw keypoint as circle
+        cv2.circle(img,tuple(pos),5,(0,255,0),-1)    # draw keypoint as circle
         keypoint_name = keypoint_decoder[i]
-        cv2.putText(img,keypoint_name,(x,y),cv2.FONT_HERSHEY_PLAIN,1,(255,0,0),2) # put the name of keypoint
+        cv2.putText(img,keypoint_name,tuple(pos),cv2.FONT_HERSHEY_PLAIN,1,(255,0,0),2) # put the name of keypoint
 
     return img
 
-def draw_pose(img, keypoints, threshold=0.2, scaleX=1, scaleY=1, color=(0,255,0), keypointRadius=5, keypointThickness=-1, lineThickness=2):
+def draw_pose(img, keypoints, threshold=0.2, color=(0,255,0), keypointRadius=5, keypointThickness=-1, lineThickness=2):
     ''' Draw pose on img. keypoints is a list of 17 keypoints '''
 
     # draw keypoints of the face (eyes, ears and nose)
     for keypointId in face_keypoints:
-        pos, score = keypoints[keypointId]
+        pos = keypoints[keypointId]['position'].astype(int)
+        score = keypoints[keypointId]['score']
         if score < threshold:
             continue
-        y = int(round(pos[1] * scaleY))
-        x = int(round(pos[0] * scaleX))
 
-        cv2.circle(img, (x,y), keypointRadius, color, keypointThickness)
+        cv2.circle(img, tuple(pos), keypointRadius, color, keypointThickness)
 
     # draw lines connecting joints
     for (id1, id2) in keypoint_lines:
-        pos1, score1 = keypoints[id1]
-        pos2, score2 = keypoints[id2]
+        pos1 = keypoints[id1]['position']
+        pos2 = keypoints[id2]['position']
+        score1 = keypoints[id1]['score']
+        score2 = keypoints[id2]['score']
+
         if score1 < threshold or score2 < threshold:
             continue
-        y1 = int(round(pos1[1] * scaleY))
-        x1 = int(round(pos1[0] * scaleX))
-        y2 = int(round(pos2[1] * scaleY))
-        x2 = int(round(pos2[0] * scaleX))
 
-        cv2.line(img, (x1,y1), (x2,y2), color, lineThickness)
+        cv2.line(img, tuple(pos1), tuple(pos2), color, lineThickness)
     
     return img
 
@@ -289,7 +272,7 @@ def detect_pose(keypoints, threshold=0.1):
     result['t-pose'] = True
     tpose_series = ['leftWrist', 'leftElbow', 'leftShoulder', 'rightShoulder', 'rightElbow', 'rightWrist']  # consider these 5 points
     tpose_series = [keypoint_encoder[x] for x in tpose_series]                                              # convert to keypoint id
-    tpose_series = [keypoints[x][0] for x in tpose_series]                                                  # obtain positions from keypoints
+    tpose_series = [keypoints[x]['position'] for x in tpose_series]                                                  # obtain positions from keypoints
 
     for i in range(len(tpose_series)-1):
         vector = tpose_series[i+1] - tpose_series[i]    # get vector of consecutive keypoints
@@ -305,7 +288,7 @@ def detect_pose(keypoints, threshold=0.1):
         result[key] = True
         handup_series = ['Shoulder', 'Elbow', 'Wrist']                     # consider these 3 points
         handup_series = [keypoint_encoder[f'{side}{x}'] for x in handup_series]   # convert to keypoint id
-        handup_series = [keypoints[x][0] for x in handup_series]                  # obtain positions
+        handup_series = [keypoints[x]['position'] for x in handup_series]                  # obtain positions
 
         for i in range(len(handup_series)-1):
             vector = handup_series[i+1] - handup_series[i]  # get vector
@@ -328,13 +311,12 @@ if __name__ == '__main__':
 
     # read image and prepare input to shape (1, height, width, 3)
     img = cv2.imread('person.jpg')
-    img_input = posenet.prepare_input(img)
 
     # apply model
-    keypoints = posenet.predict_singlepose(img_input)
+    keypoints = posenet.predict_singlepose(img)
     # draw keypoints on original image
-    # posenet.draw_keypoints(img, keypoints)
-    posenet.draw_pose(img, keypoints)
+    draw_keypoints(img, keypoints)
+    draw_pose(img, keypoints)
     detect_pose(keypoints)
 
     cv2.imshow('posenet', img)

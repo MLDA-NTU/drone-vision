@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 import cv2
 
-from posenet import PoseNet, detect_pose
+from posenet import PoseNet, detect_pose, draw_pose, draw_keypoints
 
 # itialize posenet from the package
 model_path = "posenet_mobilenet_v1_100_257x257_multi_kpt_stripped.tflite"
@@ -22,18 +22,21 @@ CENTER_Y = CAMERA_RESOLUTION_HEIGHT//2
 # ---------
 while True:
     success, img = cap.read()   # read webcam capture
-    img_input = posenet.prepare_input(img)
 
     # get keypoints for single pose estimation. it is a list of 17 keypoints
-    keypoints = posenet.predict_singlepose(img_input)
+    keypoints = posenet.predict_singlepose(img)
 
-    #track drone
-    nose_dist_x,nose_dist_y = posenet.nose_dist_to_center(img,keypoints,CENTER_X,CENTER_Y)
-    print(nose_dist_x,nose_dist_y)
+    # track nose
+    nose_pos = keypoints[0]['position']
+    nose_x = nose_pos[0] - CENTER_X
+    nose_y = nose_pos[1] - CENTER_Y
+    cv2.putText(img,f'x_distance:{nose_x} y_distance:{nose_y}', (0,CENTER_Y), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
 
     # draw keypoints to the original image
     threshold = 0.0
-    posenet.draw_pose(img, keypoints, threshold=threshold)
+    draw_pose(img, keypoints, threshold=threshold)
+    draw_keypoints(img, keypoints, threshold=threshold)
+    
     poses = detect_pose(keypoints)
     detected_poses = [pose for pose, detected in poses.items() if detected]
     detected_poses = ' '.join(detected_poses) if detected_poses else 'None'
